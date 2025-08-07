@@ -40,14 +40,12 @@ export default function PresentationsPage() {
   const [newTitle, setNewTitle] = useState('');
   const router = useRouter();
 
-  // Load nickname from localStorage
   useEffect(() => {
     const stored = window.localStorage.getItem('nickname');
     if (stored) setNickname(stored);
     else setOpenModal(true);
   }, []);
 
-  // Fetch presentations from Supabase
   useEffect(() => {
     const fetchPresentations = async () => {
       const { data, error } = await supabase
