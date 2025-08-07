@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
 import { useParams, useRouter } from 'next/navigation';
 import {
@@ -90,6 +90,71 @@ export default function PresentationRoom() {
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const editRef = useRef<HTMLDivElement | null>(null);
 
+  // Memoize functions used in dependencies and effects
+  const saveEditBlock = useCallback(async () => {
+    if (!editingBlockId) return;
+    const block = blocks.find((b) => b.id === editingBlockId);
+    if (!block) return;
+    let newData;
+    if (block.type === "text") {
+      newData = { ...block.data, text: editingText, level: editingLevel };
+    } else if (block.type === "image") {
+      newData = { ...block.data, src: editingImageSrc };
+    } else {
+      newData = { ...block.data };
+    }
+    setBlocks(blocks =>
+      blocks.map((b) =>
+        b.id === block.id ? { ...b, data: newData } : b
+      )
+    );
+    await supabase
+      .from('slide_elements')
+      .update({ data: newData })
+      .eq('id', block.id);
+    setEditingBlockId(null);
+    setEditingText('');
+    setEditingLevel(0);
+    setEditingImageSrc('');
+    setSelectedBlockId(null);
+  }, [editingBlockId, blocks, editingText, editingLevel, editingImageSrc]);
+
+  const fetchSlides = useCallback(async () => {
+    const { data } = await supabase
+      .from('slides')
+      .select('id, slide_index')
+      .eq('presentation_id', id)
+      .order('slide_index', { ascending: true });
+    if (data) setSlides(data);
+  }, [id]);
+
+  const refetchUsers = useCallback(async () => {
+    const cutoff = new Date(Date.now() - 2000).toISOString();
+    const { data } = await supabase
+      .from('presentation_users')
+      .select('nickname, role, last_seen')
+      .eq('presentation_id', id)
+      .gte('last_seen', cutoff);
+    let processedUsers = data ? [...data] : [];
+    if (presentation?.creator_nickname) {
+      processedUsers = processedUsers.map(user =>
+        user.nickname === presentation.creator_nickname
+          ? { ...user, role: 'creator' }
+          : user
+      );
+    }
+    setUsers(processedUsers.sort((a, b) => a.nickname.localeCompare(b.nickname)));
+  }, [id, presentation]);
+
+  const fetchBlocks = useCallback(async () => {
+    if (!selectedSlide) return;
+    const { data } = await supabase
+      .from('slide_elements')
+      .select('id, type, data')
+      .eq('slide_id', selectedSlide);
+    if (data) setBlocks(data);
+  }, [selectedSlide]);
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (editingBlockId && editRef.current && !editRef.current.contains(event.target as Node)) {
@@ -102,21 +167,35 @@ export default function PresentationRoom() {
     };
   }, [editingBlockId, editingText, editingImageSrc, saveEditBlock]);
 
-  useEffect(() => {
-  const handleKeyDown = (event: KeyboardEvent) => {
-    if (presentMode || document.activeElement?.tagName === 'BODY') {
-      if (event.key === 'ArrowLeft') {
-        goToPrevSlide();
-        event.preventDefault();
-      } else if (event.key === 'ArrowRight') {
-        goToNextSlide();
-        event.preventDefault();
-      }
+  const goToPrevSlide = useCallback(() => {
+    const currentSlideIndex = slides.findIndex(s => s.id === selectedSlide);
+    if (slides.length > 0 && currentSlideIndex > 0) {
+      setSelectedSlide(slides[currentSlideIndex - 1].id);
     }
-  };
-  window.addEventListener('keydown', handleKeyDown);
-  return () => window.removeEventListener('keydown', handleKeyDown);
-}, [presentMode, slides, selectedSlide, goToPrevSlide, goToNextSlide]);
+  }, [slides, selectedSlide]);
+
+  const goToNextSlide = useCallback(() => {
+    const currentSlideIndex = slides.findIndex(s => s.id === selectedSlide);
+    if (slides.length > 0 && currentSlideIndex < slides.length - 1) {
+      setSelectedSlide(slides[currentSlideIndex + 1].id);
+    }
+  }, [slides, selectedSlide]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (presentMode || document.activeElement?.tagName === 'BODY') {
+        if (event.key === 'ArrowLeft') {
+          goToPrevSlide();
+          event.preventDefault();
+        } else if (event.key === 'ArrowRight') {
+          goToNextSlide();
+          event.preventDefault();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [presentMode, slides, selectedSlide, goToPrevSlide, goToNextSlide]);
 
   useEffect(() => {
     const broadcastChannel = supabase
@@ -129,7 +208,7 @@ export default function PresentationRoom() {
     return () => {
       supabase.removeChannel(broadcastChannel);
     };
-  }, [id]);
+  }, [id, fetchSlides]);
 
   useEffect(() => {
     const controlChannel = supabase
@@ -215,7 +294,7 @@ export default function PresentationRoom() {
       )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [id]);
+  }, [id, refetchUsers]);
 
   useEffect(() => {
     if (!id) return;
@@ -233,7 +312,7 @@ export default function PresentationRoom() {
       )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [id]);
+  }, [id, fetchSlides]);
 
   useEffect(() => {
     if (!selectedSlide) return;
@@ -251,47 +330,11 @@ export default function PresentationRoom() {
       )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [selectedSlide]);
+  }, [selectedSlide, fetchBlocks]);
 
-  const refetchUsers = async () => {
-    const cutoff = new Date(Date.now() - 2000).toISOString();
-    const { data } = await supabase
-      .from('presentation_users')
-      .select('nickname, role, last_seen')
-      .eq('presentation_id', id)
-      .gte('last_seen', cutoff);
-    let processedUsers = data ? [...data] : [];
-    if (presentation?.creator_nickname) {
-      processedUsers = processedUsers.map(user =>
-        user.nickname === presentation.creator_nickname
-          ? { ...user, role: 'creator' }
-          : user
-      );
-    }
-    setUsers(processedUsers.sort((a, b) => a.nickname.localeCompare(b.nickname)));
-  };
-
-  const fetchSlides = async () => {
-    const { data } = await supabase
-      .from('slides')
-      .select('id, slide_index')
-      .eq('presentation_id', id)
-      .order('slide_index', { ascending: true });
-    if (data) setSlides(data);
-  };
-
-  const fetchBlocks = async () => {
-    if (!selectedSlide) return;
-    const { data } = await supabase
-      .from('slide_elements')
-      .select('id, type, data')
-      .eq('slide_id', selectedSlide);
-    if (data) setBlocks(data);
-  };
-
-  useEffect(() => { refetchUsers(); }, [id, presentation]);
-  useEffect(() => { fetchSlides(); }, [id, selectedSlide]);
-  useEffect(() => { fetchBlocks(); }, [selectedSlide]);
+  useEffect(() => { refetchUsers(); }, [id, presentation, refetchUsers]);
+  useEffect(() => { fetchSlides(); }, [id, selectedSlide, fetchSlides]);
+  useEffect(() => { fetchBlocks(); }, [selectedSlide, fetchBlocks]);
 
   const myRole =
     nickname && nickname === presentation?.creator_nickname
@@ -415,34 +458,6 @@ export default function PresentationRoom() {
     }
   };
 
-  const saveEditBlock = async () => {
-    if (!editingBlockId) return;
-    const block = blocks.find((b) => b.id === editingBlockId);
-    if (!block) return;
-    let newData;
-    if (block.type === "text") {
-      newData = { ...block.data, text: editingText, level: editingLevel };
-    } else if (block.type === "image") {
-      newData = { ...block.data, src: editingImageSrc };
-    } else {
-      newData = { ...block.data };
-    }
-    setBlocks(blocks =>
-      blocks.map((b) =>
-        b.id === block.id ? { ...b, data: newData } : b
-      )
-    );
-    await supabase
-      .from('slide_elements')
-      .update({ data: newData })
-      .eq('id', block.id);
-    setEditingBlockId(null);
-    setEditingText('');
-    setEditingLevel(0);
-    setEditingImageSrc('');
-    setSelectedBlockId(null);
-  };
-
   const handleRemoveBlock = async (blockId: string) => {
     setBlocks(blocks.filter((b) => b.id !== blockId));
     setSelectedBlockId(null);
@@ -482,18 +497,6 @@ export default function PresentationRoom() {
       router.push('/');
     }
   };
-
-  const currentSlideIndex = slides.findIndex(s => s.id === selectedSlide);
-  const goToPrevSlide = useCallback(() => {
-    if (slides.length > 0 && currentSlideIndex > 0) {
-      setSelectedSlide(slides[currentSlideIndex - 1].id);
-    }
-  }, [slides, currentSlideIndex]);
-  const goToNextSlide = useCallback(() => {
-    if (slides.length > 0 && currentSlideIndex < slides.length - 1) {
-      setSelectedSlide(slides[currentSlideIndex + 1].id);
-    }
-  }, [slides, currentSlideIndex]);
 
   const SlideToolbar = () => (
     <Box display="flex" gap={1} ml={2}>
@@ -582,7 +585,7 @@ export default function PresentationRoom() {
             <Tooltip title="Previous Slide">
               <span>
                 <IconButton color="primary" onClick={goToPrevSlide}
-                  disabled={currentSlideIndex <= 0}
+                  disabled={slides.findIndex(s => s.id === selectedSlide) <= 0}
                   sx={{ bgcolor: "#fff", color: "#222", mx: 1, '&:hover': { bgcolor: "#eee" } }}>
                   <ArrowBackIcon />
                 </IconButton>
@@ -591,7 +594,7 @@ export default function PresentationRoom() {
             <Tooltip title="Next Slide">
               <span>
                 <IconButton color="primary" onClick={goToNextSlide}
-                  disabled={currentSlideIndex >= slides.length - 1}
+                  disabled={slides.findIndex(s => s.id === selectedSlide) >= slides.length - 1}
                   sx={{ bgcolor: "#fff", color: "#222", mx: 1, '&:hover': { bgcolor: "#eee" } }}>
                   <ArrowForwardIcon />
                 </IconButton>
@@ -707,7 +710,7 @@ export default function PresentationRoom() {
                       position: "relative"
                     }}>
                       <Image
-                        src={block.data.src}
+                        src={block.data.src || ''}
                         alt=""
                         width={block.data.width || 320}
                         height={block.data.height || 180}
@@ -1003,7 +1006,7 @@ export default function PresentationRoom() {
                             onClick={() => handleBlockClick(block)}
                           >
                             <Image
-                              src={block.data.src}
+                              src={block.data.src || ''}
                               alt=""
                               width={block.data.width || 320}
                               height={block.data.height || 180}
