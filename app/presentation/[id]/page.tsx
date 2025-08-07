@@ -23,7 +23,6 @@ import {
   DialogContent,
   DialogContentText,
   DialogActions,
-  Avatar,
 } from '@mui/material';
 import { Rnd } from 'react-rnd';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
@@ -37,6 +36,7 @@ import TitleIcon from '@mui/icons-material/Title';
 import FormatSizeIcon from '@mui/icons-material/FormatSize';
 import TextFieldsIcon from '@mui/icons-material/TextFields';
 import CloseIcon from '@mui/icons-material/Close';
+import Image from 'next/image';
 
 interface Presentation {
   id: string;
@@ -92,11 +92,7 @@ export default function PresentationRoom() {
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (
-        editingBlockId &&
-        editRef.current &&
-        !editRef.current.contains(event.target as Node)
-      ) {
+      if (editingBlockId && editRef.current && !editRef.current.contains(event.target as Node)) {
         saveEditBlock();
       }
     };
@@ -104,23 +100,23 @@ export default function PresentationRoom() {
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
-  }, [editingBlockId, editingText, editingImageSrc]);
+  }, [editingBlockId, editingText, editingImageSrc, saveEditBlock]);
 
   useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (presentMode || document.activeElement?.tagName === 'BODY') {
-        if (event.key === 'ArrowLeft') {
-          goToPrevSlide();
-          event.preventDefault();
-        } else if (event.key === 'ArrowRight') {
-          goToNextSlide();
-          event.preventDefault();
-        }
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if (presentMode || document.activeElement?.tagName === 'BODY') {
+      if (event.key === 'ArrowLeft') {
+        goToPrevSlide();
+        event.preventDefault();
+      } else if (event.key === 'ArrowRight') {
+        goToNextSlide();
+        event.preventDefault();
       }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [presentMode, slides, selectedSlide]);
+    }
+  };
+  window.addEventListener('keydown', handleKeyDown);
+  return () => window.removeEventListener('keydown', handleKeyDown);
+}, [presentMode, slides, selectedSlide, goToPrevSlide, goToNextSlide]);
 
   useEffect(() => {
     const broadcastChannel = supabase
@@ -395,7 +391,7 @@ export default function PresentationRoom() {
       ]);
   };
 
-  const handleBlockChange = async (blockId: string, newData: any) => {
+  const handleBlockChange = async (blockId: string, newData: Block['data']) => {
     setBlocks(blocks =>
       blocks.map((block) =>
         block.id === blockId ? { ...block, data: newData } : block
@@ -488,16 +484,16 @@ export default function PresentationRoom() {
   };
 
   const currentSlideIndex = slides.findIndex(s => s.id === selectedSlide);
-  const goToPrevSlide = () => {
+  const goToPrevSlide = useCallback(() => {
     if (slides.length > 0 && currentSlideIndex > 0) {
       setSelectedSlide(slides[currentSlideIndex - 1].id);
     }
-  };
-  const goToNextSlide = () => {
+  }, [slides, currentSlideIndex]);
+  const goToNextSlide = useCallback(() => {
     if (slides.length > 0 && currentSlideIndex < slides.length - 1) {
       setSelectedSlide(slides[currentSlideIndex + 1].id);
     }
-  };
+  }, [slides, currentSlideIndex]);
 
   const SlideToolbar = () => (
     <Box display="flex" gap={1} ml={2}>
@@ -710,9 +706,11 @@ export default function PresentationRoom() {
                       justifyContent: "center",
                       position: "relative"
                     }}>
-                      <img
+                      <Image
                         src={block.data.src}
                         alt=""
+                        width={block.data.width || 320}
+                        height={block.data.height || 180}
                         style={{
                           maxWidth: "100%",
                           maxHeight: "100%",
@@ -1004,9 +1002,11 @@ export default function PresentationRoom() {
                             }}
                             onClick={() => handleBlockClick(block)}
                           >
-                            <img
+                            <Image
                               src={block.data.src}
                               alt=""
+                              width={block.data.width || 320}
+                              height={block.data.height || 180}
                               style={{
                                 maxWidth: "100%",
                                 maxHeight: "100%",
