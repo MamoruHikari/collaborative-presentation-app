@@ -90,7 +90,6 @@ export default function PresentationRoom() {
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const editRef = useRef<HTMLDivElement | null>(null);
 
-  // Memoize functions used in dependencies and effects
   const saveEditBlock = useCallback(async () => {
     if (!editingBlockId) return;
     const block = blocks.find((b) => b.id === editingBlockId);
